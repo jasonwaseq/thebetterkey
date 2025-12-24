@@ -1,0 +1,185 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Build Project",
+      "type": "shell",
+      "command": "bash",
+      "args": [
+        "-c",
+        "cd /home/jasonwaseq/thebetterkey && make clean build"
+      ],
+      "problemMatcher": "$gcc",
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "presentation": {
+        "echo": true,
+        "reveal": "always",
+        "focus": false,
+        "panel": "shared",
+        "showReuseMessage": true,
+        "clear": false
+      }
+    },
+    {
+      "label": "Flash Initiator Board",
+      "type": "shell",
+      "command": "nrfjprog",
+      "args": [
+        "--program",
+        "${workspaceFolder}/Output/Common/Exe/DWM3001CDK-DW3_QM33_SDK_CLI-FreeRTOS.hex",
+        "--sectorerase",
+        "-f", "nrf52",
+        "--snr", "${input:initiatorSN}"
+      ],
+      "dependsOn": ["Build Project"],
+      "presentation": {
+        "echo": true,
+        "reveal": "always",
+        "focus": true,
+        "panel": "new"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Flash Responder Board",
+      "type": "shell",
+      "command": "nrfjprog",
+      "args": [
+        "--program",
+        "${workspaceFolder}/Output/Common/Exe/DWM3001CDK-DW3_QM33_SDK_CLI-FreeRTOS.hex",
+        "--sectorerase",
+        "-f", "nrf52",
+        "--snr", "${input:responderSN}"
+      ],
+      "dependsOn": ["Build Project"],
+      "presentation": {
+        "echo": true,
+        "reveal": "always",
+        "focus": true,
+        "panel": "new"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Monitor Initiator Serial",
+      "type": "shell",
+      "command": "python",
+      "args": [
+        "-m",
+        "serial.tools.miniterm",
+        "${input:initiatorCOM}",
+        "115200",
+        "--filter=colorize"
+      ],
+      "presentation": {
+        "echo": true,
+        "reveal": "always",
+        "focus": true,
+        "panel": "new"
+      },
+      "isBackground": true,
+      "problemMatcher": []
+    },
+    {
+      "label": "Monitor Responder Serial",
+      "type": "shell",
+      "command": "python",
+      "args": [
+        "-m",
+        "serial.tools.miniterm",
+        "${input:responderCOM}",
+        "115200",
+        "--filter=colorize"
+      ],
+      "presentation": {
+        "echo": true,
+        "reveal": "always",
+        "focus": true,
+        "panel": "new"
+      },
+      "isBackground": true,
+      "problemMatcher": []
+    },
+    {
+      "label": "List Connected Boards",
+      "type": "shell",
+      "command": "nrfjprog",
+      "args": ["-i"],
+      "presentation": {
+        "echo": true,
+        "reveal": "always",
+        "focus": true,
+        "panel": "new"
+      }
+    },
+    {
+      "label": "List Serial Ports",
+      "type": "shell",
+      "command": "python",
+      "args": [
+        "-m",
+        "serial.tools.list_ports"
+      ],
+      "presentation": {
+        "echo": true,
+        "reveal": "always",
+        "focus": true,
+        "panel": "new"
+      }
+    },
+    {
+      "label": "Build & Flash Both Boards",
+      "type": "shell",
+      "command": "echo",
+      "args": ["Run 'Flash Initiator Board' then 'Flash Responder Board' after selecting SNs"],
+      "dependsOn": [
+        "Build Project"
+      ],
+      "presentation": {
+        "echo": true,
+        "reveal": "always",
+        "focus": true
+      }
+    },
+    {
+      "label": "Monitor Both Serial Ports",
+      "type": "shell",
+      "command": "echo",
+      "args": ["Run 'Monitor Initiator Serial' and 'Monitor Responder Serial' to see both outputs"],
+      "presentation": {
+        "echo": true,
+        "reveal": "always",
+        "focus": true
+      }
+    }
+  ],
+  "inputs": [
+    {
+      "id": "initiatorSN",
+      "type": "promptString",
+      "description": "Enter Initiator Board Serial Number (from 'List Connected Boards')",
+      "default": "680000000"
+    },
+    {
+      "id": "responderSN",
+      "type": "promptString",
+      "description": "Enter Responder Board Serial Number (from 'List Connected Boards')",
+      "default": "680000001"
+    },
+    {
+      "id": "initiatorCOM",
+      "type": "promptString",
+      "description": "Enter Initiator Board COM Port (e.g., COM5)",
+      "default": "COM5"
+    },
+    {
+      "id": "responderCOM",
+      "type": "promptString",
+      "description": "Enter Responder Board COM Port (e.g., COM6)",
+      "default": "COM6"
+    }
+  ]
+}
