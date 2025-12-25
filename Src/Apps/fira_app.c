@@ -74,6 +74,7 @@
 #include "create_fira_app_task.h"
 #include "uwb_button_initiator.h"
 #include "uwb_servo_responder.h"
+#include "uwb_signal_monitor.h"
 
 extern void pdoaupdate_lut(void);
 
@@ -166,6 +167,9 @@ static error_e fira_app_process_init(bool controller, void const *arg)
         uwb_servo_responder_init();
     }
     
+    /* Initialize signal monitoring */
+    uwb_signal_monitor_init();
+    
     uint16_t string_len = STR_SIZE * (controller ? fira_param->controlees_params.n_controlees : 1);
 
     output_result.str = malloc(string_len);
@@ -202,16 +206,18 @@ static error_e fira_app_process_init(bool controller, void const *arg)
     r = fira_set_session_parameters(&fira_ctx, session_id, &fira_param->session);
     assert(r == UWBMAC_SUCCESS);
 
-    // Send sp1 data;
-    if (fira_param->session.rframe_config == FIRA_RFRAME_CONFIG_SP1)
-    {
-#if (PROPRIETARY_SP1_TWR_EXAMPLE_ENABLE == 1)
+        // If SP1 is selected, allow proprietary data frames for app use.
+        // Example payloads are sent only when explicitly enabled.
+        if (fira_param->session.rframe_config == FIRA_RFRAME_CONFIG_SP1)
+        {
+    #if (PROPRIETARY_SP1_TWR_EXAMPLE_ENABLE == 1)
         r = fira_helper_send_data(&fira_ctx, session_id, &data_params);
         assert(r == UWBMAC_SUCCESS);
-#else
-        assert(0); /* PROPRIETARY_SP1_TWR_EXAMPLE_ENABLE not allowed */
-#endif
-    }
+    #else
+        // SP1 enabled: no example data sent. Application modules (e.g., button initiator)
+        // may send SP1 payloads as needed.
+    #endif
+        }
     if (controller)
     {
         // Add controlee session parameters;
@@ -293,20 +299,27 @@ static void report_cb(const struct ranging_results *results, void *user_data)
         return;
     }
     
-    /* Log all measurements with ultra-verbose status */
-    char block_log[160];
+    /* Log all measurements with ultra-verbose status plus diag snapshot */
+    float diag_rssi = 0.0f;
+    int diag_nlos = 0;
+    if (fira_uwb_is_diag_enabled())
+    {
+        fira_uwb_get_diag(&diag_rssi, &diag_nlos);
+    }
+
+    char block_log[196];
     int blog = snprintf(block_log, sizeof(block_log), 
-                       "%s: Block %u measurements=%d stopped_reason=%u\r\n",
+                       "%s: Block %u measurements=%d stopped_reason=%u diag_rssi=%.1f diag_nlos=%d%%\r\n",
                        is_responder ? "RESP" : "INIT", results->block_index, 
-                       results->n_measurements, results->stopped_reason);
+                       results->n_measurements, results->stopped_reason,
+                       diag_rssi, diag_nlos);
     reporter_instance.print(block_log, blog);
     
-    /* Move servo only when explicit button payload is received from initiator */
+    /* Check for button payload from initiator */
     if (results->n_measurements > 0)
     {
         uint16_t expected_peer = fira_param_local->session.destination_short_address;
 
-        bool trigger_servo = false;
         for (int i = 0; i < results->n_measurements; i++)
         {
             struct ranging_measurements *rm_local = (struct ranging_measurements *)(&results->measurements[i]);
@@ -337,16 +350,29 @@ static void report_cb(const struct ranging_results *results, void *user_data)
                 default: status_str = "UNKNOWN"; break;
             }
             
-            char meas_log[192];
+            char meas_log[224];
             int mlog = snprintf(meas_log, sizeof(meas_log), 
                                "%s: [%d] 0x%04x status=%u(%s) payload_len=%u dist=%ld slot=%u "
-                               "nlos=%d los=%d rssi=%u fom=%u\r\n",
+                               "nlos=%d los=%d rssi=%u fom=%u diag_rssi=%.1f diag_nlos=%d%%\r\n",
                                is_responder ? "RESP" : "INIT", i,
                                rm_local->short_addr, rm_local->status, status_str,
                                rm_local->sp1_data_len, (long)rm_local->distance_mm,
                                rm_local->slot_index, rm_local->nlos, rm_local->los,
-                               rm_local->rssi, rm_local->remote_aoa_azimuth_fom);
+                               rm_local->rssi, rm_local->remote_aoa_azimuth_fom,
+                               diag_rssi, diag_nlos);
             reporter_instance.print(meas_log, mlog);
+            
+            /* Log successful RX to signal monitor */
+            if (rm_local->status == 0)
+            {
+                uwb_signal_monitor_event(is_controller, rm_local->short_addr, 
+                                        SIGNAL_EVENT_RX_SUCCESS, rm_local->distance_mm);
+            }
+            else
+            {
+                uwb_signal_monitor_event(is_controller, rm_local->short_addr,
+                                        SIGNAL_EVENT_RX_ERROR, rm_local->status);
+            }
 
             /* On responder: check for BTN payload marker even if status is non-zero */
             if (is_responder && rm_local->sp1_data_len >= 4)
@@ -358,22 +384,25 @@ static void report_cb(const struct ranging_results *results, void *user_data)
                                    data[0], data[1], data[2], data[3]);
                 reporter_instance.print(payload_log, plog);
                 
+                /* Signal payload reception */
+                uwb_signal_monitor_event(is_controller, rm_local->short_addr, 
+                                        SIGNAL_EVENT_PAYLOAD_RX, 
+                                        (data[3] << 24) | (data[2] << 16) | (data[1] << 8) | data[0]);
+                
                 if (data[0] == 'B' && data[1] == 'T' && data[2] == 'N')
                 {
-                    trigger_servo = true;
+                    uint8_t btn_counter = data[3];
                     char logbuf[96];
                     int l = snprintf(logbuf, sizeof(logbuf), 
-                                    "RESP: *** BTN MATCH *** id=%u SERVO TRIGGER\r\n", 
-                                    (unsigned)data[3]);
+                                    "RESP: *** BTN MATCH *** counter=%u SERVO TRIGGER\r\n", 
+                                    (unsigned)btn_counter);
                     reporter_instance.print(logbuf, l);
+                    
+                    /* Trigger servo with button counter */
+                    uwb_servo_responder_signal_received(btn_counter);
                     break;
                 }
             }
-        }
-
-        if (trigger_servo)
-        {
-            uwb_servo_responder_signal_received();
         }
     }
     int len = 0;
@@ -545,35 +574,22 @@ static void fira_app(bool controller, void *arg)
     
     char startup_log[128];
     int slen = snprintf(startup_log, sizeof(startup_log), 
-                       "%s: UWB MAC started%s\r\n",
-                       is_controller ? "INIT" : "RESP",
-                       is_controller ? ", starting FiRa session..." : ", waiting for controller frames...");
+                       "%s: UWB MAC started, starting FiRa session...\r\n",
+                       is_controller ? "INIT" : "RESP");
     reporter_instance.print(startup_log, slen);
     
-    /* Only controller starts session immediately; controlee syncs to controller's timing */
-    if (is_controller)
-    {
-        r = fira_helper_start_session(&fira_ctx, session_id);
-        assert(r == UWBMAC_SUCCESS);
-        started = true;
-        
-        char session_log[128];
-        int slen2 = snprintf(session_log, sizeof(session_log), 
-                            "INIT: FiRa session %u started! Transmitting...\r\n", session_id);
-        reporter_instance.print(session_log, slen2);
-    }
-    else
-    {
-        /* Controlee: Start session but it will automatically sync when receiving controller frames */
-        r = fira_helper_start_session(&fira_ctx, session_id);
-        assert(r == UWBMAC_SUCCESS);
-        started = true;
-        
-        char session_log[128];
-        int slen2 = snprintf(session_log, sizeof(session_log), 
-                            "RESP: FiRa session %u started! Listening for sync...\r\n", session_id);
-        reporter_instance.print(session_log, slen2);
-    }
+    /* Both initiator and responder start sessions immediately for proper sync
+     * Button controls application behavior (servo), not session lifecycle
+     */
+    r = fira_helper_start_session(&fira_ctx, session_id);
+    assert(r == UWBMAC_SUCCESS);
+    started = true;
+    
+    char session_log[128];
+    int slen2 = snprintf(session_log, sizeof(session_log), 
+                        "%s: FiRa session %u started!\r\n",
+                        is_controller ? "INIT" : "RESP", session_id);
+    reporter_instance.print(session_log, slen2);
 
     leave_critical_section(); /**< all RTOS tasks can be scheduled */
 }

@@ -90,12 +90,18 @@ static void servo_pwm_task(void *p_arg)
         pulse_width_us = current_position;
         taskEXIT_CRITICAL();
         
-        /* Generate PWM pulse: HIGH for pulse_width_us, LOW for remainder */
-        nrf_gpio_pin_set(SERVO_PWM_PIN);
-        nrf_delay_us(pulse_width_us);
+            /* Generate PWM pulse using FreeRTOS delays instead of blocking delays */
+            nrf_gpio_pin_set(SERVO_PWM_PIN);
+            /* Convert microseconds to milliseconds + ticks, with minimum 1ms */
+            uint32_t pulse_ms = (pulse_width_us + 500) / 1000;  /* Round to nearest ms */
+            if (pulse_ms < 1) pulse_ms = 1;
+            vTaskDelay(pdMS_TO_TICKS(pulse_ms));
         
-        nrf_gpio_pin_clear(SERVO_PWM_PIN);
-        nrf_delay_us((SERVO_PERIOD_MS * 1000) - pulse_width_us);
+            nrf_gpio_pin_clear(SERVO_PWM_PIN);
+            /* Calculate remaining time in 20ms period */
+            uint32_t remaining_ms = SERVO_PERIOD_MS - pulse_ms;
+            if (remaining_ms < 1) remaining_ms = 1;
+            vTaskDelay(pdMS_TO_TICKS(remaining_ms));
         
         /* Debug output every 50 cycles (once per second) */
         cycle_count++;
@@ -135,7 +141,7 @@ void HAL_servo_init(void)
         "ServosPWM",
         128,  /* Stack size in words */
         NULL,
-        2,    /* Priority */
+            1,    /* Priority - lower than UWB (3) but higher than idle */
         &servo_pwm_task_handle
     );
     
@@ -155,13 +161,23 @@ void HAL_servo_init(void)
 void HAL_servo_set_position(uint16_t pulse_width_us)
 {
     if (!servo_initialized)
+    {
+        char err_str[] = "SERVO: ERROR - Not initialized!\r\n";
+        reporter_instance.print(err_str, strlen(err_str));
         return;
+    }
     
     /* Clamp to valid range */
     if (pulse_width_us < SERVO_MIN_PULSE_US)
         pulse_width_us = SERVO_MIN_PULSE_US;
     if (pulse_width_us > SERVO_MAX_PULSE_US)
         pulse_width_us = SERVO_MAX_PULSE_US;
+    
+    /* Log position change */
+    char log_str[64];
+    int len = snprintf(log_str, sizeof(log_str),
+        "SERVO: Setting position to %u us\r\n", pulse_width_us);
+    reporter_instance.print(log_str, len);
     
     /* Update position atomically */
     taskENTER_CRITICAL();

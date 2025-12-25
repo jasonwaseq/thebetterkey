@@ -98,6 +98,7 @@
         <file file_name="Src/Apps/fira_fn.c" />
         <file file_name="Src/Apps/fira_dw3000.c" />
         <file file_name="Src/Apps/reporter.c" />
+        <file file_name="Src/Apps/uwb_signal_monitor.c" />
         <file file_name="Src/Apps/app.c" />
         <file file_name="Src/Apps/usb_uart_tx.c" />
         <file file_name="Src/Apps/usb_uart_rx.c" />

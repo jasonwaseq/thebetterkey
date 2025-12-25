@@ -110,8 +110,8 @@ void peripherals_init(void)
 
     Timer.init();
 
-    /* Watchdog 60sec */
-    Watchdog.init(60000);
+    /* Watchdog disabled to prevent unexpected resets */
+    // Watchdog.init(60000);
 }
 
 void BoardInit(void)

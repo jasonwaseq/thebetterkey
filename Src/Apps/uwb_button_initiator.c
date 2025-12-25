@@ -54,9 +54,11 @@
 #include "HAL_servo.h"
 #include "deca_dbg.h"
 #include "fira_helper.h"
+#include "fira_app_config.h"
 #include "reporter.h"
 #include <FreeRTOS.h>
 #include <timers.h>
+#include <task.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -66,6 +68,10 @@ extern uint32_t session_id;
 
 static bool is_ranging = false;
 static TimerHandle_t ranging_burst_timer = NULL;
+static uint8_t button_press_counter = 0;  /* Increments on each button press */
+static bool payload_sent_this_press = false;  /* Tracks if payload was sent for current press */
+static TaskHandle_t button_send_task_handle = NULL;  /* Task for sending button data */
+static volatile bool pending_button_press = false;  /* Flag set by ISR, cleared by task */
 
 /**
  * @brief Timer callback to stop ranging after burst
@@ -79,9 +85,72 @@ static void ranging_burst_timeout(TimerHandle_t xTimer)
 }
 
 /**
- * @brief Button event callback for initiator
+ * @brief Task to send button data (runs in task context, not ISR)
+ */
+static void button_send_task(void *pvParameters)
+{
+    (void)pvParameters;
+    
+    for (;;)
+    {
+        /* Wait for button press notification */
+        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+        
+        char task_log[] = "BTN_TASK: Processing button press\r\n";
+        reporter_instance.print(task_log, strlen(task_log));
+        
+        /* Process pending button press */
+        if (pending_button_press)
+        {
+            pending_button_press = false;
+            
+            /* Ensure session supports proprietary payloads (SP1) */
+            fira_param_t *fira_param_cfg = get_fira_config();
+            if (fira_param_cfg == NULL || fira_param_cfg->session.rframe_config != FIRA_RFRAME_CONFIG_SP1)
+            {
+                char warn_str[] = "BTN_TASK: Skipping payload send (RFRAME != SP1)\r\n";
+                reporter_instance.print(warn_str, strlen(warn_str));
+                continue;
+            }
+
+            /* Create data parameters structure (libuwbstack signature) */
+            char data_log[128];
+            snprintf(data_log, sizeof(data_log),
+                "BTN_TASK: Creating SP1 data_parameters: BTN=%u, session_id=%u, payload_len=%d\r\n",
+                button_press_counter, session_id, (int)sizeof(payload_data));
+            reporter_instance.print(data_log, strlen(data_log));
+
+            struct data_parameters data_params;
+            uint8_t payload_data[4] = {'B', 'T', 'N', button_press_counter};
+            memset(&data_params, 0, sizeof(data_params));
+            memcpy(data_params.data_payload, payload_data, sizeof(payload_data));
+            data_params.data_payload_len = (int)sizeof(payload_data);
+
+            char send_log[128];
+            int slen = snprintf(send_log, sizeof(send_log),
+                "BTN_TASK: Sending BTN payload [B,T,N,%u] to session=%u\r\n",
+                button_press_counter, session_id);
+            reporter_instance.print(send_log, slen);
+
+            /* Send data via FiRa stack (task context) */
+            int ret = fira_helper_send_data(&fira_ctx, session_id, &data_params);
+            char result_log[128];
+            snprintf(result_log, sizeof(result_log),
+                "BTN_TASK: fira_helper_send_data returned %d, session_id=%u, payload=[%02X %02X %02X %02X] %s\r\n",
+                ret, session_id,
+                data_params.data_payload[0], data_params.data_payload[1],
+                data_params.data_payload[2], data_params.data_payload[3],
+                (ret == 0) ? "(SUCCESS)" : "(FAILED)");
+            reporter_instance.print(result_log, strlen(result_log));
+        }
+    }
+}
+
+/**
+ * @brief Button event callback for initiator (task context)
  *
- * Sends short ranging burst on button press
+ * Invoked from debounce timer processing (not an IRQ). Set a flag and
+ * notify the sender task using non-ISR FreeRTOS API.
  */
 static void button_event_callback(button_id_e button_id, bool is_pressed)
 {
@@ -92,30 +161,24 @@ static void button_event_callback(button_id_e button_id, bool is_pressed)
     
     if (is_pressed)
     {
-        /* Button pressed - send short ranging burst */
-        if (!is_ranging)
+        /* Increment button counter for new press */
+        button_press_counter++;
+        payload_sent_this_press = false;
+        
+        char btn_press_log[96];
+        int blen = snprintf(btn_press_log, sizeof(btn_press_log),
+            "BTN_ISR: Button %d pressed (counter=%u)\r\n", button_id, button_press_counter);
+        reporter_instance.print(btn_press_log, blen);
+        
+        /* Set flag and notify task to send data (task context) */
+        pending_button_press = true;
+        if (button_send_task_handle != NULL)
         {
-            uwb_button_initiator_start_ranging();
-
-            /* Send explicit SP1 payload marking button press */
-            /* Payload format: 'B','T','N', <button_id> */
-            struct data_parameters btn_params = {0};
-            btn_params.data_payload[0] = 'B';
-            btn_params.data_payload[1] = 'T';
-            btn_params.data_payload[2] = 'N';
-            btn_params.data_payload[3] = (uint8_t)button_id;
-            btn_params.data_payload_len = 4;
-
-            int r = fira_helper_send_data(&fira_ctx, session_id, &btn_params);
-            (void)r; /* ignore return in this context */
-            char send_str[] = "UWB: Sent BTN payload\r\n";
-            reporter_instance.print(send_str, strlen(send_str));
-
-            /* Start timer to stop ranging after 300ms */
-            if (ranging_burst_timer != NULL)
-            {
-                xTimerStart(ranging_burst_timer, 0);
-            }
+            /* Use non-ISR notify since we're in timer/task context */
+            vTaskNotifyGive(button_send_task_handle);
+            
+            char notified_str[] = "BTN: Task notified\r\n";
+            reporter_instance.print(notified_str, strlen(notified_str));
         }
     }
 }
@@ -124,6 +187,27 @@ void uwb_button_initiator_init(void)
 {
     char init_str[] = "INIT: Button Initiator starting\r\n";
     reporter_instance.print(init_str, strlen(init_str));
+    
+    /* Create task to handle button data sending (must run in task context, not ISR) */
+    BaseType_t task_result = xTaskCreate(
+        button_send_task,
+        "ButtonSend",
+        512,  /* Stack size */
+        NULL,
+        2,    /* Priority */
+        &button_send_task_handle
+    );
+    
+    if (task_result != pdPASS)
+    {
+        char err_str[] = "INIT: ERROR - Failed to create button send task\r\n";
+        reporter_instance.print(err_str, strlen(err_str));
+    }
+    else
+    {
+        char task_str[] = "INIT: Button send task created\r\n";
+        reporter_instance.print(task_str, strlen(task_str));
+    }
     
     /* Initialize button handler */
     button_handler_init();
@@ -137,13 +221,12 @@ void uwb_button_initiator_init(void)
     char cb_str[] = "INIT: Button callback registered\r\n";
     reporter_instance.print(cb_str, strlen(cb_str));
     
-    /* Initialize servo (responder will move servo on received signals) */
-    HAL_servo_init();
+    /* No servo on initiator: responder board handles servo movement */
     
-    /* Create timer for ranging burst timeout (300ms) */
+    /* Create timer for ranging burst timeout (5000ms) */
     ranging_burst_timer = xTimerCreate(
         "RangingBurst",
-        pdMS_TO_TICKS(300),
+        pdMS_TO_TICKS(5000),
         pdFALSE,  /* One-shot timer */
         NULL,
         ranging_burst_timeout
@@ -157,13 +240,17 @@ void uwb_button_initiator_init(void)
 
 void uwb_button_initiator_start_ranging(void)
 {
-    if (!is_ranging)
-    {
-        char str[] = "UWB: Button pressed, sending data...\r\n";
-        reporter_instance.print(str, strlen(str));
-        
-        is_ranging = true;
-        /* Session already running - no need to start/stop */
+    /* Ranging is always on for proper sync. Button triggers servo movement. */
+    char str[] = "UWB: Button pressed! Triggering servo on responder...\r\n";
+    reporter_instance.print(str, strlen(str));
+    
+    is_ranging = true;
+    /* Initiator only sends BTN payload; responder moves its servo upon receipt */
+    /* Do not call responder functions locally on initiator */
+    
+    /* Start the timer after 5 seconds */
+    if (ranging_burst_timer != NULL) {
+        xTimerStart(ranging_burst_timer, 0);
     }
 }
 
@@ -171,11 +258,10 @@ void uwb_button_initiator_stop_ranging(void)
 {
     if (is_ranging)
     {
-        char str[] = "UWB: Burst complete\r\n";
+        char str[] = "UWB: Timer complete.\r\n";
         reporter_instance.print(str, strlen(str));
         
         is_ranging = false;
-        /* Session keeps running - just stop sending burst */
     }
 }
 

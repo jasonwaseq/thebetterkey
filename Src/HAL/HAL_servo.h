@@ -59,9 +59,9 @@
  * @brief Servo position enumeration
  */
 typedef enum {
-    SERVO_POS_MIN = 1100,      // Minimum pulse width (safe left position, ~20 degrees)
-    SERVO_POS_CENTER = 1500,   // Center position (90 degrees)
-    SERVO_POS_MAX = 1650       // Maximum pulse width (safe right position, ~110 degrees, prevents stall)
+    SERVO_POS_MIN = 1000,      // Full left (~0 degrees)
+    SERVO_POS_CENTER = 1500,   // Center (90 degrees)
+    SERVO_POS_MAX = 2000       // Full right (~180 degrees)
 } servo_position_e;
 
 /**

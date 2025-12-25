@@ -1,6 +1,12 @@
 DWM3001CDK Demo Firmware
 ========================
 
+respf 3 2400 200 25 2 42 01:02:03:04:05:06:07:08 1 0 0 1
+
+initf 3 2400 200 25 2 42 01:02:03:04:05:06:07:08 1 0 0 1
+
+
+
 A heavily-modified version of the [official firmware that runs on the Qorvo DWM3001CDK](https://www.qorvo.com/products/p/DWM3001CDK#documents) (as of 2023-10-30), cleaned up and simplified for easier customization. Features:
 
 * **Reproducible**: built-in Docker development environment automates away most of the fragile and finicky parts of setting up the Qorvo SDK, SEGGER Embedded Studio, SEGGER J-Link, nRF52 SDK, and nRF command line tools.
@@ -31,10 +37,38 @@ make serial-terminal
 
 You should now see a minicom instance connected to the DWM3001CDK, try entering the "help" command to see available options.
 
-TODO: just found this on the Qorvo forums: One initiator, two responders setup:
+UWB Fob + Servo Lock
+---------------------
+
+This firmware includes a simple remote fob and lock system using UWB:
+
+- Initiator: press SW1 or SW2 and the board sends an SP1 payload over UWB.
+- Responder: upon receiving the initiator's payload, it toggles a servo between 0° and 180°.
+
+**NEW:** For comprehensive testing and verification of bidirectional RF communication, see [BIDIRECTIONAL_COMMUNICATION_GUIDE.md](BIDIRECTIONAL_COMMUNICATION_GUIDE.md)
+
+Wiring notes:
+
+- Connect your servo signal wire to the gpio_rpi header pin mapped to P0.28.
+- Provide external power to the servo (do not power it from the board), and connect grounds together.
+
+Run instructions:
+
+1. Flash both boards and open a serial terminal for each.
+2. On the responder terminal, run (SP1 required so the payload is delivered):
+
+	respf 3 2400 200 25 2 42 01:02:03:04:05:06:07:08 1 0 0 1
+
+3. On the initiator terminal, run (NOTE: only ONE responder address at end):
+
+	initf 3 2400 200 25 2 42 01:02:03:04:05:06:07:08 1 0 0 1
+
+4. Press the initiator's button (SW1/SW2). The responder will toggle the servo between 0° and 180° each time a payload is received.
+
+Multi-responder setup (one initiator, two responders):
 
 1. Perform the quickstart steps on three different DWM3001CDK boards, connect them both to power, and open a minicom terminal for each board.
-2. Run `initf 4 2400 200 25 2 42 01:02:03:04:05:06:07:08 1 0 0 1 2` on one board, and `respf 4 2400 200 25 2 42 01:02:03:04:05:06:07:08 1 0 0 1` on another, and `respf 4 2400 200 25 2 42 01:02:03:04:05:06:07:08 1 0 0 2` on the last one.
+2. Run `initf 3 2400 200 25 2 42 01:02:03:04:05:06:07:08 1 0 0 1 2` on one board, and `respf 3 2400 200 25 2 42 01:02:03:04:05:06:07:08 1 0 0 1` on another, and `respf 3 2400 200 25 2 42 01:02:03:04:05:06:07:08 1 0 0 2` on the last one.
 3. In the terminal for the initiator, you should see the distances to each responder.
 
 Developing

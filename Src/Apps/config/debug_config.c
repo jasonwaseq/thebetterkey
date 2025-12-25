@@ -52,7 +52,7 @@
 #include "debug_config.h"
 #include <string.h>
 
-#define DEFAULT_DIAG_READING 0 /**< */
+#define DEFAULT_DIAG_READING 1 /**< Enable diagnostic reads (RSSI, FOM) */
 #define DEFAULT_DEBUG        0 /**< if 1, then the LED_RED used to show an error, if any */
 
 static const debug_config_t debug_config_flash_default = {

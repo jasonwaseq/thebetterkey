@@ -151,6 +151,18 @@ bool fira_uwb_is_diag_enabled(void)
     return dw->mcps_runtime->diag.enable;
 }
 
+void fira_uwb_get_diag(float *rssi_dbm, int *nlos_pct)
+{
+    if (rssi_dbm)
+    {
+        *rssi_dbm = dw->mcps_runtime->diag.rssi;
+    }
+    if (nlos_pct)
+    {
+        *nlos_pct = (int)dw->mcps_runtime->diag.non_line_of_sight;
+    }
+}
+
 int fira_uwb_add_diag(char *str, int len, int max_len)
 {
     if (dw->mcps_runtime->diag.rssi < 0.0)

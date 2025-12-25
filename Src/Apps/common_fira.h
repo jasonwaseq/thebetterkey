@@ -163,6 +163,7 @@ void fira_uwb_mcps_deinit(void);
 int32_t fira_uwb_mcps_get_cfo_ppm(void);
 bool fira_uwb_is_diag_enabled(void);
 int fira_uwb_add_diag(char *str, int len, int max_len);
+void fira_uwb_get_diag(float *rssi_dbm, int *nlos_pct);
 
 void set_local_pavrg_size(void);
 uint8_t get_local_pavrg_size(void);

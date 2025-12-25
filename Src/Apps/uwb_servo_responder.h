@@ -35,7 +35,7 @@ void uwb_servo_responder_init(void);
  *
  * @return void
  */
-void uwb_servo_responder_signal_received(void);
+void uwb_servo_responder_signal_received(uint8_t button_counter);
 
 /**
  * @fn void uwb_servo_responder_move_servo(uint16_t position_us)

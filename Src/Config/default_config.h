@@ -91,7 +91,7 @@ extern const app_definition_t idle_app[];
 #define DEFAULT_STS_STATIC          1 //! 1 to re-load STS Key & IV after each Rx & Tx:: TCFM, Listener, InitN, RespN
 
 /* run-time config */
-#define DEFAULT_DIAG_READING        0       /**< */
+#define DEFAULT_DIAG_READING        1       /**< Enable diagnostic reads (RSSI, FOM) */
 #define DEFAULT_DEBUG               0       /**< if 1, then the LED_RED used to show an error, if any */
 
 

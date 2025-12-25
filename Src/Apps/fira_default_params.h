@@ -61,7 +61,8 @@
 #define FIRA_DEFAULT_SESSION_ID            42
 #define FIRA_DEFAULT_MULTI_NODE_MODE       FIRA_MULTI_NODE_MODE_UNICAST
 #define FIRA_DEFAULT_ROUND_HOPPING         false
-#define FIRA_DEFAULT_CONTROLLER_SHORT_ADDR 0x0
-#define FIRA_DEFAULT_CONTROLLEE_SHORT_ADDR 0x1
+/* Use non-zero distinct short addresses so controller and responder align out of the box. */
+#define FIRA_DEFAULT_CONTROLLER_SHORT_ADDR 0x1
+#define FIRA_DEFAULT_CONTROLLEE_SHORT_ADDR 0x2
 
 #endif // FIRA_DEFAULT_PARAMS_H

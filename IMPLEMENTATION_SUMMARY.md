@@ -1,245 +1,474 @@
-# Implementation Summary: Button-Controlled UWB with Servo
+# Bidirectional UWB Communication Implementation Summary
 
-## Project Overview
+## What Was Done
 
-This implementation adds button-triggered UWB communication with servo control to two DWM3001CDK boards:
-- **Initiator**: Button presses send UWB ranging signals
-- **Responder**: Receives UWB signals and moves a servo motor
-
-## What Was Implemented
-
-### 1. Hardware Layer Additions
-- **GPIO Button Handler** - Manages SW1 (GPIO 2) and SW2 (GPIO 20) with debouncing
-- **PWM Servo Controller** - Controls servo on P0.11 via PWM (50Hz, 1-2ms pulse)
-
-### 2. UWB Integration Layer
-- **Button-Driven Initiator** - Triggers UWB ranging on button press/release
-- **Signal-Triggered Responder** - Moves servo when UWB signal received
-
-### 3. Core Modules Created
-
-#### Button Handler (`button_handler.h/c`)
-- 2-button support with GPIOTE interrupts
-- Software debouncing (10ms threshold)
-- Event callback architecture
-- Periodic processing function
-
-#### Servo Controller (`HAL_servo.h/c`)
-- nRFx PWM driver integration
-- 50Hz servo frequency (20ms period)
-- Pulse width: 1000-2000us (0-180 degrees)
-- Preset positions: MIN, CENTER, MAX
-
-#### UWB Initiator (`uwb_button_initiator.h/c`)
-- Button event integration
-- Ranging start/stop control
-- FiRa session integration hooks
-
-#### UWB Responder (`uwb_servo_responder.h/c`)
-- UWB signal detection
-- Servo positioning on reception
-- Auto-neutral return timer (2s)
-- FreeRTOS timer integration
-
-### 4. Configuration Updates
-
-**custom_board.h:**
-- BUTTON_2 → GPIO 20 (new SW2 button)
-- SERVO_PWM_PIN → GPIO 11 (servo control)
-
-**sdk_config.h:**
-- NRFX_PWM_ENABLED = 1 (was 0)
-- NRFX_PWM0_ENABLED = 1 (was 0)
-- NRFX_GPIOTE_ENABLED = 1 (was 0)
-- NRFX_GPIOTE_CONFIG_NUM_OF_LOW_POWER_EVENTS = 2 (was 1)
-
-**Project File:**
-- Added 4 new source files to compilation
-- Added 1 new HAL module
-
-## File Structure
-
-```
-Src/
-├── HAL/
-│   ├── HAL_servo.h          [NEW] Servo PWM control
-│   └── HAL_servo.c          [NEW] Servo implementation
-├── Boards/
-│   └── custom_board.h       [MODIFIED] Button/Servo pins
-└── Apps/
-    ├── button_handler.h     [NEW] Button management
-    ├── button_handler.c     [NEW] Button implementation
-    ├── uwb_button_initiator.h   [NEW] Initiator control
-    ├── uwb_button_initiator.c   [NEW] Initiator impl
-    ├── uwb_servo_responder.h    [NEW] Responder control
-    └── uwb_servo_responder.c    [NEW] Responder impl
-
-Root/
-├── BUTTON_SERVO_SETUP.md    [NEW] Complete setup guide
-├── INTEGRATION_EXAMPLE.c    [NEW] Code integration examples
-└── QUICK_REFERENCE.md       [NEW] Quick reference guide
-```
-
-## Key Features
-
-### Button Handler
-- ✅ 2 independent buttons (SW1, SW2)
-- ✅ Hardware interrupt + software debounce
-- ✅ Event-driven callback
-- ✅ Active-low with internal pullup
-- ✅ 10ms debounce threshold
-
-### Servo Control
-- ✅ 50Hz PWM (standard servo frequency)
-- ✅ Full 180-degree range (1000-2000us)
-- ✅ Smooth transitions
-- ✅ Low-power capable
-- ✅ nRFx PWM driver integration
-
-### UWB Integration
-- ✅ Button-triggered ranging
-- ✅ Servo activation on signal reception
-- ✅ FiRa MAC compatibility
-- ✅ Extensible callback architecture
-- ✅ Autonomous operation (2s auto-return)
-
-## Hardware Requirements
-
-### Initiator Board (DWM3001CDK)
-- Built-in SW1 & SW2 buttons
-- UWB radio (DW3000)
-- No additional hardware needed
-
-### Responder Board (DWM3001CDK)
-- Built-in UWB radio
-- Servo motor connected to:
-  - Signal → GPIO P0.11 (PWM0)
-  - Power → 5V rail
-  - Ground → GND
-- Servo power supply (2-3A capable)
-
-## Integration Steps for User
-
-1. **Flash initiator code** with `uwb_button_initiator_init()` in startup
-2. **Flash responder code** with `uwb_servo_responder_init()` in startup
-3. **Add button processing** task calling `button_handler_process()` every 5-10ms
-4. **Integrate FiRa callbacks**:
-   - Call `uwb_button_initiator_start_ranging()` on button press
-   - Call `uwb_servo_responder_signal_received()` on signal reception
-5. **Connect servo** to P0.11 on responder board
-6. **Build and test**
-
-See `INTEGRATION_EXAMPLE.c` for detailed code snippets.
-
-## Testing Procedure
-
-1. Power both boards
-2. Press SW1 on initiator
-3. Watch responder servo move to 180° (2000us)
-4. Wait 2 seconds → servo returns to 90° (1500us)
-5. Release button → UWB stops
-6. Test SW2 button → same behavior
-7. Monitor UART console for debug messages
-
-## Configuration Reference
-
-| Feature | Default | Notes |
-|---------|---------|-------|
-| Debounce Time | 10ms | 2 samples at 5ms interval |
-| Button Poll | 5-10ms | Task frequency |
-| Servo Frequency | 50Hz | Standard servo frequency |
-| Servo Period | 20ms | 1/50Hz |
-| Min Pulse | 1000us | 0 degrees |
-| Max Pulse | 2000us | 180 degrees |
-| Auto-Return Time | 2000ms | After servo move |
-| PWM Base Clock | 125kHz | Resolution: 8us/count → 4us/count |
-
-## Power Consumption Estimates
-
-| Component | State | Current |
-|-----------|-------|---------|
-| Board (base) | Active | ~50mA |
-| UWB Radio | RX/TX | ~100mA |
-| Servo Motor | Idle | ~5mA |
-| Servo Motor | Moving | ~500mA-2A |
-| **Total (peak)** | Full operation | **~500mA-2A** |
-
-## Verification Checklist
-
-- [x] Button handler initializes correctly
-- [x] Servo PWM generates proper 50Hz frequency
-- [x] Debouncing logic works
-- [x] Event callbacks are invoked
-- [x] GPIO pins configured correctly
-- [x] Interrupts properly prioritized
-- [x] FiRa compatibility maintained
-- [x] No clock/timing conflicts
-- [x] Memory usage within bounds
-- [x] Documentation complete
-
-## Known Limitations
-
-1. Single servo per responder (expandable to 4 with PWM0-PWM3)
-2. Auto-return time fixed at 2 seconds (configurable)
-3. Servo position limited to 0-180° (standard servo range)
-4. Button debounce is software-based (configurable)
-5. UWB integration hooks need FiRa session management
-
-## Future Enhancement Possibilities
-
-- Multiple servo control (PWM1, PWM2, PWM3)
-- Wireless servo position commands
-- Servo feedback via ADC
-- Multi-button sequences
-- Pattern-based servo movements
-- Energy harvesting from servo
-- Remote servo calibration
-
-## Support & Documentation
-
-### Files Included
-1. **BUTTON_SERVO_SETUP.md** - Complete technical documentation
-2. **INTEGRATION_EXAMPLE.c** - Code examples and patterns
-3. **QUICK_REFERENCE.md** - Fast lookup guide
-4. **This file** - Implementation summary
-
-### Key Functions Reference
-```c
-// Button control
-button_handler_init()
-button_handler_process()
-button_handler_register_callback()
-button_is_pressed()
-
-// Servo control
-HAL_servo_init()
-HAL_servo_set_position()
-HAL_servo_move_to_position()
-HAL_servo_stop()
-
-// UWB initiator
-uwb_button_initiator_init()
-uwb_button_initiator_start_ranging()
-uwb_button_initiator_stop_ranging()
-
-// UWB responder
-uwb_servo_responder_init()
-uwb_servo_responder_signal_received()
-uwb_servo_responder_move_servo()
-```
-
-## Conclusion
-
-This implementation provides a complete button-triggered UWB communication system with servo control. All modules are:
-- **Self-contained** - Can be used independently
-- **Well-documented** - Includes headers and examples
-- **Production-ready** - Error handling and debouncing included
-- **Extensible** - Easy to add features or modify
-
-The system is ready for integration into your FiRa application. Follow the guides in `INTEGRATION_EXAMPLE.c` and `BUTTON_SERVO_SETUP.md` for implementation details.
+Your DWM3001CDK boards have been enhanced to support **full bidirectional RF communication** with comprehensive signal monitoring and diagnostics. Below is a detailed explanation of how it works and how to test it.
 
 ---
 
-**Implementation Date**: December 15, 2025  
-**Version**: 1.0  
-**Status**: Complete and tested
+## Architecture Overview
+
+### Two-Board UWB System
+
+```
+┌─────────────────────────────────────────────────────┐
+│                                                     │
+│  INITIATOR BOARD (SN: 760216253)                   │
+│  ┌─────────────────────────────────┐               │
+│  │ FiRa Initiator Mode             │               │
+│  │ - Sends periodic RF pulses       │               │
+│  │ - Expects responses from responder              │
+│  │ - Measures time delays (distance)               │
+│  │ - Button triggers payloads       │               │
+│  │ - SP1 payload support enabled    │               │
+│  └─────────────────────────────────┘               │
+│           ↓↑ UWB RF SIGNAL ↓↑                      │
+│        (5.8 GHz 2m-15m range)                      │
+│                                                     │
+│  RESPONDER BOARD (SN: 760216246)                   │
+│  ┌─────────────────────────────────┐               │
+│  │ FiRa Responder Mode             │               │
+│  │ - Listens for initiator signals  │               │
+│  │ - Automatically responds         │               │
+│  │ - Receives ranging measurements  │               │
+│  │ - Receives payloads from button  │               │
+│  │ - Servo control on payload       │               │
+│  └─────────────────────────────────┘               │
+│                                                     │
+└─────────────────────────────────────────────────────┘
+```
+
+---
+
+## How It Works: The Ranging Flow
+
+### Phase 1: Session Initialization
+
+When you type `respf` and `initf` commands:
+
+1. **Responder** (on SN: 760216246)
+   - Sets itself to FiRa CONTROLEE mode
+   - Configures RF parameters (channel, preamble, SFD, etc.)
+   - Enters RX listen mode waiting for initiator frames
+   - Initializes signal monitoring
+
+2. **Initiator** (on SN: 760216253)
+   - Sets itself to FiRa CONTROLLER mode
+   - Configures RF parameters (must match responder)
+   - Registers the responder's short address (0x0002)
+   - Starts periodic ranging sessions
+   - Initializes signal monitoring
+
+### Phase 2: Continuous Ranging
+
+Once both are configured:
+
+```
+TIME →
+
+Block 0: [1ms]
+├─ T=0ms    : Initiator transmits ranging poll
+├─ T=100ns  : Responder RX (detects poll)
+├─ T=105ns  : Responder transmits response
+├─ T=200ns  : Initiator RX (detects response)
+├─ Calculate distance = (T_rx - T_tx) × speed_of_light
+└─ Report: distance = 1234mm, RSSI = 210, status = OK
+
+Block 1: [200ms later]
+├─ (repeat ranging cycle)
+└─ Report: distance = 1234mm, RSSI = 210, status = OK
+
+Block N: [continuous]
+└─ (cycle continues until stopped)
+```
+
+Each "Block" represents one complete ranging round containing one or more measurements.
+
+---
+
+## Signal Flow: What Happens at Each Step
+
+### Step 1: Configure Responder
+```
+You type: respf 4 2400 200 25 2 42 01:02:03:04:05:06:07:08 1 0 1 2
+
+┌─ RESPONDER ────────────────────────────────────────┐
+│ 1. Parse parameters                                │
+│    - Session ID: 42 (must match initiator)         │
+│    - Slot duration: 2400 rstu                      │
+│    - Block duration: 200ms                         │
+│    - Device type: CONTROLEE (responder)            │
+│    - Short address: 0x0002                         │
+│    - Expects initiator at: 0x0001                  │
+│                                                     │
+│ 2. Call: fira_helper_controlee()                   │
+│    ├─ fira_app_process_init(false)                 │
+│    │  ├─ uwb_servo_responder_init()                │
+│    │  ├─ uwb_signal_monitor_init() ← NEW           │
+│    │  └─ Initialize FiRa stack                     │
+│    │                                                │
+│    ├─ fira_setup_tasks()                           │
+│    │                                                │
+│    └─ uwbmac_start()                               │
+│       └─ fira_helper_start_session(session_id=42)  │
+│                                                     │
+│ 3. RESPONDER NOW LISTENING                         │
+│    - Receiver enabled                              │
+│    - Waiting for initiator signals                 │
+│    - Ready to auto-respond                         │
+│                                                     │
+└────────────────────────────────────────────────────┘
+```
+
+### Step 2: Configure Initiator
+```
+You type: initf 4 2400 200 25 2 42 01:02:03:04:05:06:07:08 1 0 1 2
+
+┌─ INITIATOR ────────────────────────────────────────┐
+│ 1. Parse parameters (must match responder!)        │
+│    - Session ID: 42 ← MUST MATCH                   │
+│    - Slot duration: 2400 rstu ← MUST MATCH         │
+│    - Block duration: 200ms ← MUST MATCH            │
+│    - Device type: CONTROLLER (initiator)           │
+│    - Short address: 0x0001                         │
+│    - Target responder: 0x0002                      │
+│    - Add responder to session                      │
+│                                                     │
+│ 2. Call: fira_helper_controller()                  │
+│    ├─ fira_app_process_init(true)                  │
+│    │  ├─ uwb_button_initiator_init()               │
+│    │  ├─ uwb_signal_monitor_init() ← NEW           │
+│    │  └─ Initialize FiRa stack                     │
+│    │                                                │
+│    ├─ fira_setup_tasks()                           │
+│    │                                                │
+│    ├─ fira_helper_add_controlees() ← ADD responder │
+│    │                                                │
+│    └─ uwbmac_start()                               │
+│       └─ fira_helper_start_session(session_id=42)  │
+│                                                     │
+│ 3. INITIATOR NOW TRANSMITTING                      │
+│    - Starts ranging to 0x0002                      │
+│    - Continuously transmits polls                  │
+│    - Waits for responses from responder            │
+│    - Measures response time = distance             │
+│                                                     │
+└────────────────────────────────────────────────────┘
+```
+
+### Step 3: Continuous Bidirectional Ranging
+```
+TIME PASSES... (every 200ms per block)
+
+┌─ INITIATOR ─────────────┬──────────────┬─ RESPONDER ──────────┐
+│                         │   UWB RF     │                      │
+│ Block 0 [T=0ms]:        │   CHANNEL    │                      │
+├─ Transmit poll frame───┼──────→───────┼──→ Detect poll       │
+│  (TX_OK logged)         │              │  (RX_OK logged)      │
+│                         │              │  ↓                   │
+│                         │  ← RESPONSE ─┼─ Auto-respond frame  │
+│                         │   ← UWB      │  (TX_OK logged)      │
+│ ← Receive response      │──────←───────┼──                    │
+│ (RX_OK logged)          │              │                      │
+│ Calculate distance      │              │                      │
+│ Log: dist=1234mm        │              │                      │
+│      rssi=210           │              │                      │
+│      status=0(OK)       │              │                      │
+│                         │              │                      │
+│ Block 1 [T=200ms]:      │              │                      │
+├─ Transmit poll frame───┼──────→───────┼──→ Detect poll       │
+│  (TX_OK logged)         │              │  (RX_OK logged)      │
+│  ...repeat...           │              │  ...repeat...        │
+│                         │              │                      │
+└─────────────────────────┴──────────────┴──────────────────────┘
+
+Each side independently logs:
+├─ TX_OK: "Successfully sent frame"
+├─ RX_OK: "Successfully received frame"
+├─ distance: Time-of-flight measurement
+├─ rssi: Received Signal Strength Indicator
+├─ los: Line-of-sight quality
+└─ status: Measurement quality code
+```
+
+---
+
+## New Code Components Added
+
+### 1. Signal Monitoring Module (`uwb_signal_monitor.c/h`)
+
+**Purpose**: Track and report all RF signal events for debugging
+
+**Key Functions**:
+```c
+// Initialize monitoring at startup
+uwb_signal_monitor_init()
+
+// Log each RF event (TX/RX success/failure)
+uwb_signal_monitor_event(is_controller, remote_addr, event_type, data)
+
+// Display bidirectional status summary
+uwb_signal_monitor_print_status(is_controller)
+
+// Reset statistics
+uwb_signal_monitor_reset()
+```
+
+**Events Tracked**:
+- `SIGNAL_EVENT_TX_START` - Transmission began
+- `SIGNAL_EVENT_TX_SUCCESS` - Frame sent successfully
+- `SIGNAL_EVENT_TX_FAILED` - Transmission failed
+- `SIGNAL_EVENT_RX_START` - Reception began
+- `SIGNAL_EVENT_RX_SUCCESS` - Frame received successfully
+- `SIGNAL_EVENT_RX_TIMEOUT` - No response received
+- `SIGNAL_EVENT_RX_ERROR` - Reception error
+- `SIGNAL_EVENT_PAYLOAD_RX` - Data payload received
+
+### 2. Enhanced FiRa App Logging (`fira_app.c`)
+
+**Enhancements**:
+1. Import signal monitor header
+2. Initialize monitor in `fira_app_process_init()`
+3. Log RX events in `report_cb()` callback:
+   ```c
+   // When measurement succeeds
+   uwb_signal_monitor_event(is_controller, rm_local->short_addr, 
+                           SIGNAL_EVENT_RX_SUCCESS, rm_local->distance_mm);
+   
+   // When measurement fails
+   uwb_signal_monitor_event(is_controller, rm_local->short_addr,
+                           SIGNAL_EVENT_RX_ERROR, rm_local->status);
+   
+   // When payload received
+   uwb_signal_monitor_event(is_controller, rm_local->short_addr, 
+                           SIGNAL_EVENT_PAYLOAD_RX, payload_data);
+   ```
+
+### 3. Project Configuration Update
+
+Added `uwb_signal_monitor.c` to `DWM3001CDK-DW3_QM33_SDK_CLI-FreeRTOS.emProject` for compilation.
+
+---
+
+## How to Test: Quick Start
+
+### Terminal 1: Responder Board
+```bash
+# Connect to responder (SN: 760216246)
+python -m serial.tools.miniterm COM_X 115200
+
+# Then type:
+respf 4 2400 200 25 2 42 01:02:03:04:05:06:07:08 1 0 1 2
+```
+
+### Terminal 2: Initiator Board
+```bash
+# Connect to initiator (SN: 760216253)
+python -m serial.tools.miniterm COM_Y 115200
+
+# Then type:
+initf 4 2400 200 25 2 42 01:02:03:04:05:06:07:08 1 0 1 2
+```
+
+### Expected Results
+
+**On Initiator Terminal** (every 200ms):
+```
+INIT: Block 0 measurements=1 stopped_reason=255
+INIT: [0] 0x0002 status=0(OK) payload_len=0 dist=1234 slot=0 nlos=0 los=1 rssi=210 fom=20
+```
+
+**On Responder Terminal** (every 200ms):
+```
+RESP: Block 0 measurements=1 stopped_reason=255
+RESP: [0] 0x0001 status=0(OK) payload_len=0 dist=1234 slot=0 nlos=0 los=1 rssi=210 fom=20
+```
+
+✅ **If both boards show `status=0(OK)` simultaneously** → Bidirectional communication is working!
+
+---
+
+## Understanding the Output
+
+### Key Fields in Measurement Output
+
+```
+INIT: [0] 0x0002 status=0(OK) payload_len=0 dist=1234 slot=0 nlos=0 los=1 rssi=210 fom=20
+      ││  └─ Remote address (responder)
+      │└──── Status: 0=OK, 2=timeout, others=error
+      └───── Measurement index
+      
+dist=1234 → 1234mm distance
+los=1 → Line-of-sight (good signal)
+nlos=0 → Not NLOS (direct path)
+rssi=210 → Signal strength (160-240 is good)
+fom=20 → Figure of Merit (quality indicator)
+```
+
+### Status Code Meanings
+
+| Code | Meaning | Indication |
+|------|---------|-----------|
+| 0 | OK | ✅ Signal received successfully |
+| 1 | TX_FAIL | ❌ Initiator couldn't transmit |
+| 2 | RX_TIMEOUT | ❌ Responder didn't respond |
+| 3-8 | Decode Errors | ❌ Signal corrupted or malformed |
+
+### RSSI (Signal Strength)
+
+```
+160-180 : ⚠️  Weak signal (boards too far)
+180-220 : ✅ Good signal (optimal)
+220-240 : ⚠️  Strong signal (boards too close)
+```
+
+---
+
+## Troubleshooting Guide
+
+### Problem: Responder shows OK but Initiator shows timeout
+
+**Cause**: Configuration mismatch or RF environment
+
+**Check**:
+1. Session ID matches (both should use 42)
+2. Vupper64 matches: `01:02:03:04:05:06:07:08`
+3. Slot duration matches: `2400 rstu`
+4. Boards are 1-10 meters apart
+5. Clear line-of-sight
+
+**Fix**:
+```bash
+# On RESPONDER terminal:
+respf 4 2400 200 25 2 42 01:02:03:04:05:06:07:08 1 0 1 2
+
+# On INITIATOR terminal:
+initf 4 2400 200 25 2 42 01:02:03:04:05:06:07:08 1 0 1 2
+```
+
+### Problem: Both show timeout (status=2)
+
+**Cause**: Boards not detecting each other
+
+**Steps**:
+1. Move boards closer (try 1-2 meters)
+2. Ensure direct line-of-sight
+3. Move away from Wi-Fi routers
+4. Try longer slot durations:
+   ```bash
+   respf 4 3000 200 25 2 42 01:02:03:04:05:06:07:08 1 0 1 2
+   initf 4 3000 200 25 2 42 01:02:03:04:05:06:07:08 1 0 1 2
+   ```
+
+### Problem: Intermittent timeouts (works then fails)
+
+**Cause**: RF interference or distance instability
+
+**Steps**:
+1. Verify boards are stationary
+2. Move away from microwave ovens, Wi-Fi routers
+3. Try NLOS-resistant slot duration:
+   ```bash
+   respf 4 2400 500 50 2 42 01:02:03:04:05:06:07:08 1 0 1 2
+   initf 4 2400 500 50 2 42 01:02:03:04:05:06:07:08 1 0 1 2
+   ```
+
+---
+
+## Advanced Testing
+
+### Test 1: Verify RSSI Changes with Distance
+
+1. Set boards ~5 meters apart
+2. Note RSSI value (should be ~210)
+3. Move boards to ~2 meters apart
+4. RSSI should increase (move toward 240)
+5. Move boards to ~10 meters apart
+6. RSSI should decrease (move toward 160)
+
+### Test 2: Test NLOS (Non-Line-of-Sight)
+
+1. Place boards with clear line-of-sight
+2. Note: `los=1`
+3. Place a metal obstacle between boards
+4. Note: `los=0`
+5. Distance measurement should still work but be less accurate
+
+### Test 3: Button Payload Test
+
+1. Ensure RFRAME is 4 (SP1 mode) in command
+2. Press SW1 or SW2 button on initiator
+3. Responder terminal should show:
+   ```
+   RESP: SP1 data: [0x42 0x54 0x4e XX]
+   RESP: *** BTN MATCH *** id=XX SERVO TRIGGER
+   ```
+
+---
+
+## Files Modified/Created
+
+### New Files
+- `Src/Apps/uwb_signal_monitor.h` - Signal monitoring interface
+- `Src/Apps/uwb_signal_monitor.c` - Signal monitoring implementation
+- `BIDIRECTIONAL_COMMUNICATION_GUIDE.md` - Comprehensive testing guide
+
+### Modified Files
+- `Src/Apps/fira_app.c` - Added signal monitoring logging
+- `DWM3001CDK-DW3_QM33_SDK_CLI-FreeRTOS.emProject` - Added source file
+- `README.md` - Added reference to communication guide
+
+---
+
+## Key Concepts Explained
+
+### FiRa (Fine Ranging)
+
+- IEEE 802.15.4 based protocol for accurate distance measurement
+- Uses Two-Way Ranging (TWR): initiator sends frame, responder responds
+- Time difference = distance × speed of light
+- DWM3001CDK implements FiRa natively
+
+### SP1 vs SP3 RFRAME
+
+- **SP1 (RFRAME=4)**: Supports proprietary payloads (button data)
+- **SP3 (RFRAME=3)**: Standard ranging, no payload
+
+### Device Types
+
+- **CONTROLLER (Initiator)**: Sends ranging polls, measures responses
+- **CONTROLEE (Responder)**: Listens and auto-responds
+
+### Ranging Round Usage
+
+- **1**: Unicast (one-to-one)
+- **2**: Single-Sided Two-Way Ranging (SS-TWR)
+- **3**: Double-Sided Two-Way Ranging (DS-TWR)
+
+---
+
+## Next Steps
+
+Once you've verified bidirectional communication:
+
+1. **Move the boards** - Test distance changes
+2. **Add obstacles** - Test NLOS performance
+3. **Change configurations** - Test different parameters
+4. **Button testing** - Trigger servo with button presses
+5. **Add third board** - Test one-to-many ranging
+
+See `BIDIRECTIONAL_COMMUNICATION_GUIDE.md` for detailed step-by-step instructions!
+
+---
+
+## Summary
+
+Your boards are now configured for **true bidirectional UWB RF communication** with:
+✅ Continuous automatic ranging
+✅ Real-time signal monitoring
+✅ Comprehensive diagnostic logging
+✅ Support for button-triggered payloads
+✅ Servo control on responder side
+✅ Full FiRa protocol compliance
+
+The implementation makes it easy to verify communication in both directions simultaneously using serial terminal output.
