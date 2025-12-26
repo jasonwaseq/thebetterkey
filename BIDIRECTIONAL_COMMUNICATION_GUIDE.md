@@ -12,7 +12,7 @@ respf 4 2400 300 30 1 42 01:02:03:04:05:06:07:08 0 0 0x0001 0x0002
 Initiator: 
 initf 4 2400 300 30 1 42 01:02:03:04:05:06:07:08 0 0 0x0001 0x0002
 
-\760216246
+760216246
 760216253
 > **Note**: To find your COM ports, use `python -m serial.tools.list_ports`
 
