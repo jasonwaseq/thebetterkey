@@ -83,26 +83,35 @@ static void servo_pwm_task(void *p_arg)
     
     (void)p_arg;
     
-    for (;;)
-    {
+    const uint32_t max_cycles = 50; // 1 second of PWM
+    for (uint32_t i = 0; i < max_cycles; ++i) {
         /* Get current position safely */
         taskENTER_CRITICAL();
         pulse_width_us = current_position;
         taskEXIT_CRITICAL();
-        
-            /* Generate PWM pulse using FreeRTOS delays instead of blocking delays */
-            nrf_gpio_pin_set(SERVO_PWM_PIN);
-            /* Convert microseconds to milliseconds + ticks, with minimum 1ms */
-            uint32_t pulse_ms = (pulse_width_us + 500) / 1000;  /* Round to nearest ms */
-            if (pulse_ms < 1) pulse_ms = 1;
-            vTaskDelay(pdMS_TO_TICKS(pulse_ms));
-        
-            nrf_gpio_pin_clear(SERVO_PWM_PIN);
-            /* Calculate remaining time in 20ms period */
-            uint32_t remaining_ms = SERVO_PERIOD_MS - pulse_ms;
-            if (remaining_ms < 1) remaining_ms = 1;
-            vTaskDelay(pdMS_TO_TICKS(remaining_ms));
-        
+        /* Deep debug: log every PWM cycle */
+        char cycle_str[128];
+        int clen = snprintf(cycle_str, sizeof(cycle_str),
+            "[DEBUG][servo_pwm_task] PWM cycle: Pin=%u, Pulse=%u us\r\n", SERVO_PWM_PIN, pulse_width_us);
+        reporter_instance.print(cycle_str, clen);
+
+        /* Generate PWM pulse with microsecond accuracy */
+        nrf_gpio_pin_set(SERVO_PWM_PIN);
+        nrf_delay_us(pulse_width_us); // Accurate high pulse
+        nrf_gpio_pin_clear(SERVO_PWM_PIN);
+
+        /* Calculate remaining time in 20ms period (in microseconds) */
+        uint32_t remaining_us = (SERVO_PERIOD_MS * 1000) - pulse_width_us;
+        if (remaining_us > 0) {
+            // For long remaining time, yield to FreeRTOS for most of it, then busy-wait for the last ~1ms
+            if (remaining_us > 2000) {
+                vTaskDelay(pdMS_TO_TICKS((remaining_us - 1000) / 1000));
+                nrf_delay_us((remaining_us - 1000) % 1000 + 1000);
+            } else {
+                nrf_delay_us(remaining_us);
+            }
+        }
+
         /* Debug output every 50 cycles (once per second) */
         cycle_count++;
         if (cycle_count >= 50)
@@ -113,10 +122,14 @@ static void servo_pwm_task(void *p_arg)
             reporter_instance.print(pwm_str, len);
             cycle_count = 0;
         }
-        
-        /* Yield to other tasks briefly */
-        vTaskDelay(1);
+        /* No extra vTaskDelay(1); needed, period is enforced above */
     }
+    nrf_gpio_pin_clear(SERVO_PWM_PIN);
+    char stop_str[] = "SERVO: PWM task finished, output stopped\r\n";
+    reporter_instance.print(stop_str, strlen(stop_str));
+    TaskHandle_t handle = servo_pwm_task_handle;
+    servo_pwm_task_handle = NULL;
+    vTaskDelete(handle);
 }
 
 void HAL_servo_init(void)
@@ -131,31 +144,9 @@ void HAL_servo_init(void)
     reporter_instance.print(pin_str, len);
     
     current_position = SERVO_POS_CENTER;
-    
-    char init_str[] = "SERVO: Initializing PWM task\r\n";
+    servo_initialized = true;
+    char init_str[] = "SERVO: Initialized, PWM task not running until move command.\r\n";
     reporter_instance.print(init_str, strlen(init_str));
-    
-    /* Create PWM task */
-    BaseType_t xReturned = xTaskCreate(
-        servo_pwm_task,
-        "ServosPWM",
-        128,  /* Stack size in words */
-        NULL,
-            1,    /* Priority - lower than UWB (3) but higher than idle */
-        &servo_pwm_task_handle
-    );
-    
-    if (xReturned == pdPASS)
-    {
-        servo_initialized = true;
-        char ok_str[] = "SERVO: PWM task created successfully\r\n";
-        reporter_instance.print(ok_str, strlen(ok_str));
-    }
-    else
-    {
-        char fail_str[] = "SERVO: Failed to create PWM task!\r\n";
-        reporter_instance.print(fail_str, strlen(fail_str));
-    }
 }
 
 void HAL_servo_set_position(uint16_t pulse_width_us)
@@ -173,16 +164,34 @@ void HAL_servo_set_position(uint16_t pulse_width_us)
     if (pulse_width_us > SERVO_MAX_PULSE_US)
         pulse_width_us = SERVO_MAX_PULSE_US;
     
-    /* Log position change */
-    char log_str[64];
+    /* Log position change (deep debug) */
+    char log_str[128];
     int len = snprintf(log_str, sizeof(log_str),
-        "SERVO: Setting position to %u us\r\n", pulse_width_us);
+        "[DEBUG][HAL_servo_set_position] Setting position to %u us (was %u us)\r\n", pulse_width_us, current_position);
     reporter_instance.print(log_str, len);
     
     /* Update position atomically */
     taskENTER_CRITICAL();
     current_position = pulse_width_us;
     taskEXIT_CRITICAL();
+
+        /* Start PWM task if not running */
+    if (servo_pwm_task_handle == NULL) {
+        char start_str[] = "SERVO: Starting PWM task for move\r\n";
+        reporter_instance.print(start_str, strlen(start_str));
+        BaseType_t xReturned = xTaskCreate(
+            servo_pwm_task,
+            "ServosPWM",
+            512,
+            NULL,
+            1,
+            &servo_pwm_task_handle
+        );
+        if (xReturned != pdPASS) {
+            char fail_str[] = "SERVO: Failed to start PWM task!\r\n";
+            reporter_instance.print(fail_str, strlen(fail_str));
+        }
+    }
 }
 
 void HAL_servo_move_to_position(servo_position_e position)

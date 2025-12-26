@@ -98,14 +98,14 @@ static struct uwbmac_context *uwbmac_ctx = NULL;
  * uwb_stack encrypts and guarantee the integrity of the packet, however the flow control, and
  * retransmission shall be implemented on the upper layer.
  */
-#define PROPRIETARY_SP1_TWR_EXAMPLE_ENABLE (0)  /* Disabled to test standard FiRa first */
+#define PROPRIETARY_SP1_TWR_EXAMPLE_ENABLE (1)  /* Enabled to support SP1 payloads */
 
 
 #if (PROPRIETARY_SP1_TWR_EXAMPLE_ENABLE == 1)
 /* Below is the example data set to be used for SP1 proprietary frames example */
 static struct data_parameters data_params = {
-    .data_payload = {1, 2, 3},
-    .data_payload_len = 3,
+    .data_payload = {0},
+    .data_payload_len = 0,
 };
 #endif
 
@@ -361,6 +361,14 @@ static void report_cb(const struct ranging_results *results, void *user_data)
                                rm_local->rssi, rm_local->remote_aoa_azimuth_fom,
                                diag_rssi, diag_nlos);
             reporter_instance.print(meas_log, mlog);
+            // Deep debug: always print sp1_data_len and first 8 bytes of sp1_data
+            char debug_log[128];
+            int dlog = snprintf(debug_log, sizeof(debug_log),
+                "[DEBUG] RX: sp1_data_len=%u, sp1_data=[%02X %02X %02X %02X %02X %02X %02X %02X] (first 8 bytes)\r\n",
+                rm_local->sp1_data_len,
+                rm_local->sp1_data[0], rm_local->sp1_data[1], rm_local->sp1_data[2], rm_local->sp1_data[3],
+                rm_local->sp1_data[4], rm_local->sp1_data[5], rm_local->sp1_data[6], rm_local->sp1_data[7]);
+            reporter_instance.print(debug_log, dlog);
             
             /* Log successful RX to signal monitor */
             if (rm_local->status == 0)

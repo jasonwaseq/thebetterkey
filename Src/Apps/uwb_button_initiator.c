@@ -104,16 +104,11 @@ static void button_send_task(void *pvParameters)
         {
             pending_button_press = false;
             
-            /* Ensure session supports proprietary payloads (SP1) */
-            fira_param_t *fira_param_cfg = get_fira_config();
-            if (fira_param_cfg == NULL || fira_param_cfg->session.rframe_config != FIRA_RFRAME_CONFIG_SP1)
-            {
-                char warn_str[] = "BTN_TASK: Skipping payload send (RFRAME != SP1)\r\n";
-                reporter_instance.print(warn_str, strlen(warn_str));
-                continue;
-            }
+            /* Always send SP1 payload on button press, regardless of RFRAME */
+
 
             /* Create data parameters structure (libuwbstack signature) */
+            uint8_t payload_data[4] = {'B', 'T', 'N', button_press_counter};
             char data_log[128];
             snprintf(data_log, sizeof(data_log),
                 "BTN_TASK: Creating SP1 data_parameters: BTN=%u, session_id=%u, payload_len=%d\r\n",
@@ -121,7 +116,6 @@ static void button_send_task(void *pvParameters)
             reporter_instance.print(data_log, strlen(data_log));
 
             struct data_parameters data_params;
-            uint8_t payload_data[4] = {'B', 'T', 'N', button_press_counter};
             memset(&data_params, 0, sizeof(data_params));
             memcpy(data_params.data_payload, payload_data, sizeof(payload_data));
             data_params.data_payload_len = (int)sizeof(payload_data);
@@ -142,6 +136,14 @@ static void button_send_task(void *pvParameters)
                 data_params.data_payload[2], data_params.data_payload[3],
                 (ret == 0) ? "(SUCCESS)" : "(FAILED)");
             reporter_instance.print(result_log, strlen(result_log));
+            // Deep debug: print full data_params after send
+            char debug_log[128];
+            snprintf(debug_log, sizeof(debug_log),
+                "[DEBUG] After send: data_payload_len=%d, data_payload=[%02X %02X %02X %02X] (first 4 bytes)\r\n",
+                data_params.data_payload_len,
+                data_params.data_payload[0], data_params.data_payload[1],
+                data_params.data_payload[2], data_params.data_payload[3]);
+            reporter_instance.print(debug_log, strlen(debug_log));
         }
     }
 }
@@ -175,7 +177,7 @@ static void button_event_callback(button_id_e button_id, bool is_pressed)
         if (button_send_task_handle != NULL)
         {
             /* Use non-ISR notify since we're in timer/task context */
-            vTaskNotifyGive(button_send_task_handle);
+            xTaskNotifyGive(button_send_task_handle);
             
             char notified_str[] = "BTN: Task notified\r\n";
             reporter_instance.print(notified_str, strlen(notified_str));

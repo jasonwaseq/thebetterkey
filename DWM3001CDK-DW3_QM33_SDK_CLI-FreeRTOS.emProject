@@ -68,6 +68,7 @@
         <file file_name="Src/HAL/HAL_button.c" />
         <file file_name="Src/HAL/HAL_servo.c" />
         <file file_name="Src/HAL/HAL_usb.c" />
+        <file file_name="Src/HAL/nrf_drv_common.c" />
       </folder>
       <folder Name="Apps">
         <folder Name="config">

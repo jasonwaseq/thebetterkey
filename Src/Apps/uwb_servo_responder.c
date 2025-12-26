@@ -166,12 +166,7 @@ static void responder_worker_task(void *pvParameters)
 
                 /* Flip state so the next signal moves in the opposite direction */
                 servo_position_state = !servo_position_state;
-
-                /* Stop any existing timer (stay in position) */
-                if (servo_return_timer != NULL)
-                {
-                    xTimerStop(servo_return_timer, 0);
-                }
+                /* Do not start or stop any timer; servo stays at target position */
             }
         }
     }
