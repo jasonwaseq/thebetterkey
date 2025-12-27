@@ -1,44 +1,6 @@
-DWM3001CDK Demo Firmware
-========================
-
-respf 3 2400 200 25 2 42 01:02:03:04:05:06:07:08 1 0 0 1
-
-initf 3 2400 200 25 2 42 01:02:03:04:05:06:07:08 1 0 0 1
-
-
-
-A heavily-modified version of the [official firmware that runs on the Qorvo DWM3001CDK](https://www.qorvo.com/products/p/DWM3001CDK#documents) (as of 2023-10-30), cleaned up and simplified for easier customization. Features:
-
-* **Reproducible**: built-in Docker development environment automates away most of the fragile and finicky parts of setting up the Qorvo SDK, SEGGER Embedded Studio, SEGGER J-Link, nRF52 SDK, and nRF command line tools.
-* **Minimal**: based on the official DWM3001CDK CLI project, but significantly simpler in terms of code size and organization. Many source files and folders have been consolidated to make the project much easier to navigate.
-* **Complete**: includes build system, flashing tools, and logging/debugging tools. This is the only repository you need to work with the firmware.
-* **Portable**: run `make save-development-environment` to generate a 5GB tar file containing the entire development environment. In 10 years from now, when half of these dependencies disappear off the internet, run `make load-development-environment` and you'll still be able to compile this project.
-
-Note that most of the UCI functionality has been removed, since I didn't end up needing it - only the UART CLI interface remains. Besides that, it has the exact same features as the original version of the firmware, including UWB ranging, calibration features, and more.
-
-**See also:** if you're building a custom firmware for the DWM3001C, check out my [DWM3001C starter firmware repository](https://github.com/Uberi/DWM3001C-starter-firmware/).
-
-Quickstart
-----------
-
-```sh
-# MANUAL ACTION (OPTIONAL): run this command to use my prebuilt development environment, otherwise it'll be automatically built from scratch: docker pull uberi/qorvo-nrf52833-board
-
-make build
-
-# MANUAL ACTION: connect the lower USB port of the DWM3001CDK (labelled J9) to this computer using a USB cable (this is the J-Link's USB port)
-
-make flash
-
-# MANUAL ACTION: disconnect the lower USB port of the DWM3001CDK, and connect the upper USB port instead (labelled J20) (this is the nRF52833's USB port)
-
-make serial-terminal
-```
-
-You should now see a minicom instance connected to the DWM3001CDK, try entering the "help" command to see available options.
-
 UWB Fob + Servo Lock
 ---------------------
+This project implements a robust, real-time bidirectional UWB (Ultra-Wideband) communication and control system using Nordic nRF52 hardware and the Qorvo/Decawave UWB stack. It enables precise wireless distance measurement and event-driven payload exchange between embedded boards, with custom logic for servo actuation in response to UWB-triggered events. The system features FreeRTOS-based multitasking, microsecond-accurate software PWM for servo control, and comprehensive diagnostic logging.
 
 This firmware includes a simple remote fob and lock system using UWB:
 
