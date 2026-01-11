@@ -55,6 +55,7 @@
 #include "deca_dbg.h"
 #include "fira_helper.h"
 #include "fira_app_config.h"
+#include "fira_app.h"
 #include "reporter.h"
 #include <FreeRTOS.h>
 #include <timers.h>
@@ -125,6 +126,35 @@ static void button_send_task(void *pvParameters)
                 "BTN_TASK: Sending BTN payload [B,T,N,%u] to session=%u\r\n",
                 button_press_counter, session_id);
             reporter_instance.print(send_log, slen);
+
+            /* Encrypt payload with rolling code using current block number */
+
+            extern uint32_t fira_get_current_block_index(void);
+            uint32_t block_num = fira_get_current_block_index() + 1; // Use next block for sync
+            uint8_t key[16] = {0xA5, 0xC3, 0xF1, 0xB7, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C};
+            uint8_t nonce[13] = {0};
+            memcpy(nonce, &block_num, sizeof(block_num));
+            uint8_t mac[8] = {0};
+            void *ccm_ctx = mcps_crypto_aead_aes_ccm_star_128_create(key);
+            int enc_result = mcps_crypto_aead_aes_ccm_star_128_encrypt(
+                ccm_ctx,
+                nonce,
+                NULL, 0, // No header
+                data_params.data_payload,
+                sizeof(payload_data),
+                mac,
+                sizeof(mac)
+            );
+            char dbg[128];
+            int dbglen = snprintf(dbg, sizeof(dbg),
+                "[DEBUG][INIT] AES-CCM* encrypt block=%lu result=%d len=%d MAC=[%02X %02X %02X %02X %02X %02X %02X %02X]\r\n",
+                (unsigned long)block_num, enc_result, (int)sizeof(payload_data),
+                mac[0], mac[1], mac[2], mac[3], mac[4], mac[5], mac[6], mac[7]);
+            reporter_instance.print(dbg, dbglen);
+            // Append MAC to payload
+            memcpy(data_params.data_payload + sizeof(payload_data), mac, sizeof(mac));
+            data_params.data_payload_len = sizeof(payload_data) + sizeof(mac);
+            mcps_crypto_aead_aes_ccm_star_128_destroy(ccm_ctx);
 
             /* Send data via FiRa stack (task context) */
             int ret = fira_helper_send_data(&fira_ctx, session_id, &data_params);

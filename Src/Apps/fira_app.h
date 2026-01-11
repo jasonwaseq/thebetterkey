@@ -56,6 +56,10 @@
 extern "C" {
 #endif
 
+// Rolling code encryption API
+uint32_t rolling_code(uint32_t block_num);
+void xor_encrypt(uint8_t *data, uint8_t len, uint32_t code);
+
 void fira_terminate(void);
 void fira_helper_controller(const void *arg);
 void fira_helper_controlee(const void *arg);

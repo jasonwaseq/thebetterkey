@@ -59,6 +59,34 @@
 #include "appConfig.h"
 #include "default_config.h"
 #include "rf_tuning_config.h"
+
+// --- Rolling code encryption ---
+
+#define ROLLING_SECRET 0xA5C3F1B7u
+uint32_t rolling_code(uint32_t block_num) {
+    // Simple PRNG: xorshift with block_num and secret
+    uint32_t code = block_num ^ ROLLING_SECRET;
+    code ^= code << 13;
+    code ^= code >> 17;
+    code ^= code << 5;
+    return code;
+}
+
+void xor_encrypt(uint8_t *data, uint8_t len, uint32_t code) {
+    for (uint8_t i = 0; i < len; ++i) {
+        data[i] ^= ((code >> ((i % 4) * 8)) & 0xFF);
+    }
+}
+
+// Frequency hopping: define allowed channels
+static const uint8_t fh_channels[] = {5, 7, 9};
+static const uint8_t fh_num_channels = sizeof(fh_channels) / sizeof(fh_channels[0]);
+static uint8_t fh_current_channel_idx = 0;
+
+// Helper to get next channel index (block-based hopping)
+static uint8_t fh_get_channel_idx(uint32_t block_num) {
+    return block_num % fh_num_channels;
+}
 #include "common_fira.h"
 #include "cmd_fn.h"
 #include "int_priority.h"
@@ -90,6 +118,11 @@ extern void pdoaupdate_lut(void);
 #endif
 
 static struct uwbmac_context *uwbmac_ctx = NULL;
+static uint32_t current_block_index = 0;
+
+uint32_t fira_get_current_block_index(void) {
+    return current_block_index;
+}
 
 /* uwb_stack version >8.x.x allows usage of SP1 RFRAMES on Deferred DS-TWR to transmit IoT data.
  * This mode is not specified in FiRa MAC 1.2, i.e. proprietary implementation.
@@ -107,6 +140,7 @@ static struct data_parameters data_params = {
     .data_payload = {0},
     .data_payload_len = 0,
 };
+#include <string.h>
 #endif
 
 #define STR_SIZE (256)
@@ -298,6 +332,22 @@ static void report_cb(const struct ranging_results *results, void *user_data)
         reporter_instance.print(stop_log, slen);
         return;
     }
+
+    // Frequency hopping: update channel before each block
+    current_block_index = results->block_index;
+    uint8_t next_channel_idx = fh_get_channel_idx(results->block_index);
+    if (next_channel_idx != fh_current_channel_idx) {
+        fh_current_channel_idx = next_channel_idx;
+        uint8_t next_channel = fh_channels[fh_current_channel_idx];
+        // Update session channel (both boards must use same schedule)
+        fira_param_t *fira_param = get_fira_config();
+        fira_param->session.channel_number = next_channel;
+        fira_set_session_parameters(&fira_ctx, session_id, &fira_param->session);
+        char ch_log[64];
+        int chlen = snprintf(ch_log, sizeof(ch_log), "%s: Frequency hop to channel %u (block %u)\r\n",
+            is_responder ? "RESP" : "INIT", next_channel, results->block_index);
+        reporter_instance.print(ch_log, chlen);
+    }
     
     /* Log all measurements with ultra-verbose status plus diag snapshot */
     float diag_rssi = 0.0f;
@@ -333,6 +383,32 @@ static void report_cb(const struct ranging_results *results, void *user_data)
                                    is_responder ? "RESP" : "INIT", i, rm_local->short_addr, expected_peer);
                 reporter_instance.print(skip_log, slog);
                 continue;
+            }
+
+            /* Decrypt SP1 payload if present */
+            if (rm_local->sp1_data_len >= 12) {
+                uint8_t key[16] = {0xA5, 0xC3, 0xF1, 0xB7, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C};
+                uint8_t nonce[13] = {0};
+                memcpy(nonce, &results->block_index, sizeof(results->block_index));
+                uint8_t mac[8] = {0};
+                memcpy(mac, rm_local->sp1_data + (rm_local->sp1_data_len - 8), 8);
+                void *ccm_ctx = mcps_crypto_aead_aes_ccm_star_128_create(key);
+                int dec_result = mcps_crypto_aead_aes_ccm_star_128_decrypt(
+                    ccm_ctx,
+                    nonce,
+                    NULL, 0, // No header
+                    (uint8_t*)rm_local->sp1_data,
+                    rm_local->sp1_data_len - 8,
+                    mac,
+                    sizeof(mac)
+                );
+                char dbg[128];
+                int dbglen = snprintf(dbg, sizeof(dbg),
+                    "[DEBUG][RESP] AES-CCM* decrypt block=%lu result=%d len=%u MAC=[%02X %02X %02X %02X %02X %02X %02X %02X]\r\n",
+                    (unsigned long)results->block_index, dec_result, rm_local->sp1_data_len,
+                    mac[0], mac[1], mac[2], mac[3], mac[4], mac[5], mac[6], mac[7]);
+                reporter_instance.print(dbg, dbglen);
+                mcps_crypto_aead_aes_ccm_star_128_destroy(ccm_ctx);
             }
 
             /* Detailed measurement status with human-readable error codes */
@@ -512,6 +588,11 @@ static void data_task(void const *arg)
         if (evt.value.signals & STOP_TASK)
         {
             break;
+        }
+        // Encrypt payload before sending
+        if (data_params.data_payload_len > 0) {
+            uint32_t code = rolling_code(0); // TODO: replace 0 with current block number if available
+            xor_encrypt(data_params.data_payload, data_params.data_payload_len, code);
         }
         fira_helper_send_data(&fira_ctx, session_id, &data_params);
     };
