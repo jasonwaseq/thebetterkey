@@ -385,30 +385,52 @@ static void report_cb(const struct ranging_results *results, void *user_data)
                 continue;
             }
 
-            /* Decrypt SP1 payload if present */
+            /* Decrypt SP1 payload if present, with rolling code window */
             if (rm_local->sp1_data_len >= 12) {
                 uint8_t key[16] = {0xA5, 0xC3, 0xF1, 0xB7, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C};
-                uint8_t nonce[13] = {0};
-                memcpy(nonce, &results->block_index, sizeof(results->block_index));
                 uint8_t mac[8] = {0};
                 memcpy(mac, rm_local->sp1_data + (rm_local->sp1_data_len - 8), 8);
-                void *ccm_ctx = mcps_crypto_aead_aes_ccm_star_128_create(key);
-                int dec_result = mcps_crypto_aead_aes_ccm_star_128_decrypt(
-                    ccm_ctx,
-                    nonce,
-                    NULL, 0, // No header
-                    (uint8_t*)rm_local->sp1_data,
-                    rm_local->sp1_data_len - 8,
-                    mac,
-                    sizeof(mac)
-                );
-                char dbg[128];
-                int dbglen = snprintf(dbg, sizeof(dbg),
-                    "[DEBUG][RESP] AES-CCM* decrypt block=%lu result=%d len=%u MAC=[%02X %02X %02X %02X %02X %02X %02X %02X]\r\n",
-                    (unsigned long)results->block_index, dec_result, rm_local->sp1_data_len,
-                    mac[0], mac[1], mac[2], mac[3], mac[4], mac[5], mac[6], mac[7]);
-                reporter_instance.print(dbg, dbglen);
-                mcps_crypto_aead_aes_ccm_star_128_destroy(ccm_ctx);
+                int window = 5; // Accept up to 5 future block indices
+                int accepted = 0;
+                uint32_t start_block = results->block_index;
+                for (int w = 0; w < window; ++w) {
+                    uint32_t try_block = start_block + w;
+                    uint8_t nonce[13] = {0};
+                    memcpy(nonce, &try_block, sizeof(try_block));
+                    void *ccm_ctx = mcps_crypto_aead_aes_ccm_star_128_create(key);
+                    int dec_result = mcps_crypto_aead_aes_ccm_star_128_decrypt(
+                        ccm_ctx,
+                        nonce,
+                        NULL, 0, // No header
+                        (uint8_t*)rm_local->sp1_data,
+                        rm_local->sp1_data_len - 8,
+                        mac,
+                        sizeof(mac)
+                    );
+                    char dbg[160];
+                    int dbglen = snprintf(dbg, sizeof(dbg),
+                        "[DEBUG][RESP] AES-CCM* window decrypt try_block=%lu result=%d len=%u MAC=[%02X %02X %02X %02X %02X %02X %02X %02X]\r\n",
+                        (unsigned long)try_block, dec_result, rm_local->sp1_data_len,
+                        mac[0], mac[1], mac[2], mac[3], mac[4], mac[5], mac[6], mac[7]);
+                    reporter_instance.print(dbg, dbglen);
+                    mcps_crypto_aead_aes_ccm_star_128_destroy(ccm_ctx);
+                    if (dec_result == 0) {
+                        accepted = 1;
+                        // Optionally: update expected block index here if you track it
+                        char sync_log[96];
+                        int slen = snprintf(sync_log, sizeof(sync_log),
+                            "[DEBUG][RESP] Rolling code window sync: accepted block=%lu (offset=%d)\r\n",
+                            (unsigned long)try_block, w);
+                        reporter_instance.print(sync_log, slen);
+                        break;
+                    }
+                }
+                if (!accepted) {
+                    char rej_log[96];
+                    int rlen = snprintf(rej_log, sizeof(rej_log),
+                        "[DEBUG][RESP] Rolling code window: all attempts failed, payload rejected\r\n");
+                    reporter_instance.print(rej_log, rlen);
+                }
             }
 
             /* Detailed measurement status with human-readable error codes */
